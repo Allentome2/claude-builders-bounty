@@ -43,18 +43,19 @@ def last_tag(repo):
 def commits_since(repo, since):
     rev_range = f"{since}..HEAD" if since else "HEAD"
     fmt = "%H%x1f%h%x1f%s%x1f%b%x1e"
-    out = run_git(["log", rev_range, f"--pretty=format:{fmt}", "--no-merges"], repo)
+        try:         out = run_git(["log", rev_range, f"--pretty=format:{fmt}", "--no-merges"], repo)     except subprocess.CalledProcessError:         # Empty repo (no commits yet) or unreadable range: nothing to report.         return [], f"--pretty=format:{fmt}", "--no-merges"], repo)
     commits = []
     for chunk in out.split("\x1e"):
-        chunk = chunk.strip()
+                # Don't strip(): it would mutate commit bodies (indentation, blank         # lines). Only drop the trailing newline git appends after the last         # record separator.         chunk = chunk.rstrip("
+")
         if not chunk:
             continue
         sha, short, subject, body = (chunk.split("\x1f") + ["", "", "", ""])[:4]
-        commits.append({"sha": sha, "short": short, "subject": subject.strip(), "body": body.strip()})
+        commits.append({"sha": sha, "short": short, "subject": subject.strip(), "body": body})
     return commits
 
 
-def categorize(subject):
+def categorize(subject, body=""):     # BREAKING CHANGE footer wins over everything: it's a breaking change.     if "BREAKING CHANGE" in body:         return "Changed"
     # Conventional-commit prefix wins, e.g. "feat:", "fix(scope):".
     m = re.match(r"^(\w+)(?:\([^)]*\))?(!)?:", subject)
     if m:
@@ -101,7 +102,7 @@ def main():
     ap = argparse.ArgumentParser(description="Generate CHANGELOG.md from git history.")
     ap.add_argument("--stdout", action="store_true", help="Print to stdout instead of writing CHANGELOG.md")
     ap.add_argument("--output", default="CHANGELOG.md", help="Output file (default: CHANGELOG.md)")
-    ap.add_argument("--since", default=None, help="Start from this tag/ref instead of the latest tag")
+    ap.add_argument("--since", default=None, help="Start from this tag/ref instead of the last tag")
     ap.add_argument("--repo", default=".", help="Path to the git repository (default: .)")
     args = ap.parse_args()
 
@@ -111,12 +112,12 @@ def main():
         print(f"error: '{args.repo}' is not a git repository", file=sys.stderr)
         sys.exit(1)
 
-    since = args.since or last_tag(args.repo)
+        since = args.since or last_tag(args.repo)     if since and since.startswith("-"):         # Guard against git option injection via --since (e.g. "--since=-p"         # would otherwise be parsed as a git flag).         print(f"error: invalid --since value: {since!r}", file=sys.stderr)         sys.exit(1)
     commits = commits_since(args.repo, since)
 
     grouped = OrderedDict((c, []) for c in CATEGORIES)
     for c in commits:
-        grouped[categorize(c["subject"])].append(c)
+        grouped[categorize(c["subject"], c["body"])].append(c)
 
     version_label = "Unreleased" if since is None else f"Unreleased (since {since})"
     markdown = render(grouped, version_label)
